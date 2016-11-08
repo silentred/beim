@@ -3,23 +3,11 @@ package comet
 import (
 	"beim/lib"
 	"errors"
-	"fmt"
 )
 
 const (
-	stateCHR byte = iota // Regular character
-	stateMWC             // Multi-level wildcard
-	stateSWC             // Single-level wildcard
-	stateSEP             // Topic level separator
-	stateSYS             // System level topic ($)
-)
-
-const (
-	MWC = "#"  // MWC is the multi-level wildcard
-	SWC = "+"  // SWC is the single level wildcard
-	SEP = "/"  // SEP is the topic level separator
-	SYS = "$"  // SYS is the starting character of the system level topics
-	_WC = "#+" // Both wildcards
+	actAdd byte = iota
+	actDel
 )
 
 var (
@@ -52,15 +40,34 @@ type TopicTree struct {
 }
 
 func (tt *TopicTree) Subscribe(topic string, info *SubInfo) {
+	res, err := parseTopic(topic)
+	if err != nil {
+		panic(err)
+	}
 
+	tt.root.subscribe(res, info, actAdd)
 }
 
 func (tt *TopicTree) Unsubscribe(topic, clientID string) {
+	res, err := parseTopic(topic)
+	if err != nil {
+		panic(err)
+	}
+	info := &SubInfo{clientID, 0}
 
+	tt.root.subscribe(res, info, actDel)
 }
 
-func (tt *TopicTree) GetSubscribers(topic string, result []*SubInfo) {
+func (tt *TopicTree) GetSubscribers(topic string) []*SubInfo {
+	res, err := parseTopic(topic)
+	if err != nil {
+		panic(err)
+	}
 
+	var ret []*SubInfo
+	tt.root.getInfos(res, &ret)
+
+	return ret
 }
 
 type topicNode struct {
@@ -70,7 +77,11 @@ type topicNode struct {
 }
 
 func newNode(name string) *topicNode {
-	return &topicNode{}
+	return &topicNode{
+		Name:     name,
+		Infos:    make([]*SubInfo, 0),
+		children: make([]*topicNode, 0),
+	}
 }
 
 func (tn *topicNode) findOrAppendNode(node *topicNode) {
@@ -97,15 +108,14 @@ func (tn *topicNode) findOrCreateChildByName(name string) *topicNode {
 	node := tn.findChildByName(name)
 	if node == nil {
 		node = newNode(name)
+		tn.children = append(tn.children, node)
 	}
-
-	tn.children = append(tn.children, node)
 
 	return node
 }
 
 func (tn *topicNode) appendSubInfo(info *SubInfo) {
-	// need mutex ??
+	// TODO: need mutex
 	var found bool
 	n := len(tn.Infos)
 	for i := 0; i < n; i++ {
@@ -120,9 +130,68 @@ func (tn *topicNode) appendSubInfo(info *SubInfo) {
 	}
 }
 
+func (tn *topicNode) deleteSubInfo(info *SubInfo) {
+	var found bool
+	var index int
+	n := len(tn.Infos)
+	for i := 0; i < n; i++ {
+		if tn.Infos[i].ClientID == info.ClientID {
+			found = true
+			index = i
+			break
+		}
+	}
+
+	if found {
+		tn.Infos = tn.Infos[:index+copy(tn.Infos[index:], tn.Infos[index+1:])]
+	}
+}
+
+func (tn *topicNode) getInfos(names []string, infos *[]*SubInfo) {
+	if len(names) == 0 {
+		*infos = append(*infos, tn.Infos...)
+		return
+	}
+
+	currName := names[0]
+	if currName == "+" || currName == "#" {
+		for _, node := range tn.children {
+			node.getInfos(names[1:], infos)
+		}
+	} else {
+		node := tn.findChildByName(currName)
+		if node != nil {
+			node.getInfos(names[1:], infos)
+		}
+	}
+}
+
+// sub or unsub
+func (tn *topicNode) subscribe(names []string, info *SubInfo, act byte) {
+	if len(names) == 0 {
+		switch act {
+		case actAdd:
+			tn.appendSubInfo(info)
+		case actDel:
+			tn.deleteSubInfo(info)
+		}
+		return
+	}
+
+	currName := names[0]
+	if currName == "+" || currName == "#" {
+		for _, node := range tn.children {
+			node.subscribe(names[1:], info, act)
+		}
+	} else {
+		node := tn.findOrCreateChildByName(currName)
+		node.subscribe(names[1:], info, act)
+	}
+}
+
 func parseTopic(topic string) (res []string, err error) {
+	var resBytes [][]byte
 	n := len(topic)
-	resBytes := make([][]byte, 1)
 	topicBytes := []byte(topic)
 	var lastSepIndex int
 
@@ -144,7 +213,7 @@ func parseTopic(topic string) (res []string, err error) {
 			return
 		}
 
-		if i < n-1 && bytesContains(nodeName, []byte{'+', '#'}) {
+		if i < n-1 && bytesContains(nodeName, []byte{'#'}) {
 			err = ErrWildCardAtEnd
 			return
 		}
@@ -153,46 +222,6 @@ func parseTopic(topic string) (res []string, err error) {
 	}
 
 	return
-}
-
-// Returns topic level, remaining topic levels and any errors
-func nextTopicLevel(topic []byte) ([]byte, []byte, error) {
-	s := stateCHR
-
-	for i, c := range topic {
-		switch c {
-		case '/':
-			if s == stateMWC {
-				return nil, nil, fmt.Errorf("memtopics/nextTopicLevel: Multi-level wildcard found in topic and it's not at the last level")
-			}
-			if i == 0 {
-				return []byte(""), topic[i+1:], nil
-			}
-			return topic[:i], topic[i+1:], nil
-		case '#':
-			if i != 0 {
-				return nil, nil, fmt.Errorf("memtopics/nextTopicLevel: Wildcard character '#' must occupy entire topic level")
-			}
-			s = stateMWC
-		case '+':
-			if i != 0 {
-				return nil, nil, fmt.Errorf("memtopics/nextTopicLevel: Wildcard character '+' must occupy entire topic level")
-			}
-			s = stateSWC
-		case '$':
-			s = stateSYS
-		default:
-			if s == stateMWC || s == stateSWC {
-				return nil, nil, fmt.Errorf("memtopics/nextTopicLevel: Wildcard characters '#' and '+' must occupy entire topic level")
-			}
-			s = stateCHR
-		}
-	}
-
-	// If we got here that means we didn't hit the separator along the way, so the
-	// topic is either empty, or does not contain a separator. Either way, we return
-	// the full topic
-	return topic, nil, nil
 }
 
 func bytesContains(stack []byte, needle []byte) bool {

@@ -134,5 +134,7 @@ func (server *Server) handleConnection(conn net.Conn) {
 	srv := newService(conn, DefaultKeepAlive)
 	// for loop service
 	srv.start()
+	// for test TODO remove
+	saveService(string(connMsg.Username()), srv)
 
 }

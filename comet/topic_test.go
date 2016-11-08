@@ -6,68 +6,47 @@ import (
 )
 
 func TestParse(t *testing.T) {
-	topic := "user/123/+/"
+	topic := "user/123/+/test"
 
 	res, err := parseTopic(topic)
-	fmt.Println(res, err)
+	fmt.Println(res, err, len(res))
 }
 
-type ListNode struct {
-	Val  int
-	Next *ListNode
+func TestSub(t *testing.T) {
+	info := &SubInfo{"user_123", 1}
+	info2 := &SubInfo{"user_456", 1}
+	root := newNode("")
+
+	topic := "user/123"
+	res, _ := parseTopic(topic)
+	root.subscribe(res, info, actAdd)
+	root.subscribe(res, info2, actAdd)
+
+	//root.subscribe(res, info2, actDel)
+
+	printNodes(root)
+
+	topic = "user/+"
+	res, _ = parseTopic(topic)
+	var ret []*SubInfo
+	fmt.Printf("%p \n", &ret)
+	root.getInfos(res, &ret)
+
+	fmt.Println(ret, len(ret))
 }
 
-func addTwoNumbers(l1 *ListNode, l2 *ListNode) *ListNode {
-	var result *ListNode
-	var plus bool
+func printNodes(node *topicNode) {
+	fmt.Printf("%s - %d | ", node.Name, len(node.children))
 
-	result = nil
-
-	for l1 != nil || l2 != nil {
-		var left, right int
-		if l1 != nil {
-			left = l1.Val
-			l1 = l1.Next
-		}
-
-		if l2 != nil {
-			right = l2.Val
-			l2 = l2.Next
-		}
-
-		val := left + right
-		if plus {
-			val++
-		}
-
-		if val >= 10 {
-			val = val - 10
-			plus = true
-		} else {
-			plus = false
-		}
-
-		if result == nil {
-			result = &ListNode{Val: val}
-		} else {
-			var node *ListNode
-			node = result
-			for node.Next != nil {
-				node = node.Next
-			}
-			node.Next = &ListNode{Val: val}
+	if node.children != nil && len(node.children) > 0 {
+		for _, n := range node.children {
+			printNodes(n)
 		}
 	}
 
-	if plus {
-		var node *ListNode
-		node = result
-		for node.Next != nil {
-			node = node.Next
+	if len(node.Infos) > 0 {
+		for _, info := range node.Infos {
+			fmt.Println(node.Name, info)
 		}
-		node.Next = &ListNode{Val: 1}
 	}
-
-	return result
-
 }
