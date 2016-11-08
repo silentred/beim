@@ -25,9 +25,12 @@ type service struct {
 	quit      chan struct{}
 	keepAlive time.Duration
 	timer     *time.Timer
+
+	connMsg *message.ConnectMessage
+	server  *Server
 }
 
-func newService(conn io.Closer, keepAlive int) *service {
+func newService(conn io.Closer, keepAlive int, connMsg *message.ConnectMessage, server *Server) *service {
 	if serviceID == math.MaxUint64-1 {
 		serviceID = 0
 	}
@@ -39,6 +42,8 @@ func newService(conn io.Closer, keepAlive int) *service {
 		// outQueue:  make([]int, 10),
 		quit:      make(chan struct{}, 1),
 		keepAlive: time.Duration(keepAlive) * time.Second,
+		connMsg:   connMsg,
+		server:    server,
 	}
 }
 
@@ -163,6 +168,12 @@ func (service *service) handlePublishMsg(msg *message.PublishMessage) {
 	}
 
 	// for simplecity, just send to Router
+	// just send to destination for test; TODO stick with MQTT
+	infos := memTopicTree.GetSubscribers(string(msg.Topic()))
+	for _, info := range infos {
+		srv := service.server.clientServices[info.ClientID]
+		srv.writeMsg(msg)
+	}
 
 }
 
@@ -176,6 +187,7 @@ func (service *service) handleSubscribeMsg(msg *message.SubscribeMessage) {
 
 	for i, val := range topics {
 		fmt.Printf("topic %s, qos %d \n", string(val), qoss[i])
+		memTopicTree.Subscribe(string(val), &SubInfo{string(service.connMsg.Username()), qoss[i]})
 	}
 
 	// if sub success
@@ -191,6 +203,7 @@ func (service *service) handleUnsubscribeMsg(msg *message.UnsubscribeMessage) {
 	topics := msg.Topics()
 	for _, val := range topics {
 		fmt.Printf("topic %s \n", string(val))
+		memTopicTree.Unsubscribe(string(val), string(service.connMsg.Username()))
 	}
 
 	service.writeMsg(resp)

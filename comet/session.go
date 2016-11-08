@@ -10,6 +10,26 @@ const (
 	DefaultMaxInflight = 10
 )
 
+var memSess = make(map[string]*Session)
+
+type memSessions map[string]*Session
+
+func (ms *memSessions) Create(name string, sess *Session) {
+	(*ms)[name] = sess
+}
+func (ms *memSessions) Update(name string, sess *Session) {
+	(*ms)[name] = sess
+}
+func (ms *memSessions) Delete(name string) {
+	delete((*ms), name)
+}
+func (ms *memSessions) Find(name string) *Session {
+	if s, ok := (*ms)[name]; ok {
+		return s
+	}
+	return nil
+}
+
 type SessionProvidor interface {
 	Create(clientID string) error
 	Update(clientID string) error

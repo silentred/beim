@@ -15,6 +15,10 @@ var (
 	ErrWildCardAtEnd = errors.New("Wildcard character '#', '+' must be at the end")
 )
 
+var (
+	memTopicTree = &TopicTree{root: newNode("")}
+)
+
 type TopicProvider interface {
 	Subscribe(topic string, info *SubInfo)
 	Unsubscribe(topic, clientID string)
@@ -28,7 +32,7 @@ type Topic struct {
 
 // SubInfo saved in TopicTree
 // router 找到所有订阅者后，直接发送到 queue, comet 订阅 clientID topic, 就能接收到msg;
-// 目前开来，router 不需要 qos 信息
+// 目前看来，router 不需要 qos 信息
 type SubInfo struct {
 	ClientID string
 	QoS      byte

@@ -33,9 +33,10 @@ type Server struct {
 
 func NewServer(config *ServerConfig) *Server {
 	return &Server{
-		Config: config,
-		Auth:   new(mockAuth),
-		stop:   make(chan struct{}, 1),
+		Config:         config,
+		Auth:           new(mockAuth),
+		stop:           make(chan struct{}, 1),
+		clientServices: make(map[string]*service),
 	}
 }
 
@@ -131,10 +132,9 @@ func (server *Server) handleConnection(conn net.Conn) {
 	// send offline
 
 	// start service
-	srv := newService(conn, DefaultKeepAlive)
+	srv := newService(conn, DefaultKeepAlive, connMsg, server)
+	// save to map
+	server.clientServices[string(connMsg.Username())] = srv
 	// for loop service
 	srv.start()
-	// for test TODO remove
-	saveService(string(connMsg.Username()), srv)
-
 }
