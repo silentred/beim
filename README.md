@@ -1,8 +1,16 @@
+# Install & Test
+
+1. `cd comet/bin`
+2. `go build -o server .`
+3. `./server`
+4. open a new session, `mosquitto_sub -c -i jason -t test -u UserJK -P sdf -d -q 0`
+4. open another session, `mosquitto_pub -t test -m "ggg" -i Jason -P Pass -u UserName -d -q 0`
+
+
 # Roadmap
 
-- [ ] comet dispatcher
+- [x] comet
 - [ ] router
-- [ ] comet
 
 # IM Server 架构
 
