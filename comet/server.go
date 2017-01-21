@@ -6,7 +6,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/surge/glog"
+	"github.com/golang/glog"
 	"github.com/surgemq/message"
 )
 
@@ -19,28 +19,38 @@ const (
 	DefaultKeepAlive = 120
 )
 
-// Server of IM
-type Server struct {
-	Config *ServerConfig
+type Comet interface {
+	Serve(net.Listener) error
+	HandleConnection(conn net.Conn)
+	// dispatch msg to client connection after receiving from MQ
+	DispatchMsg()
+}
+
+// CometServer of IM
+type CometServer struct {
+	Config *CometConfig
+	// connection count
+	ConnCount uint64
 	// to validate username/password
 	Auth Authenticator
-
+	// send msg to router; receive from
+	messager Messager
 	// stop signal chan
 	stop chan struct{}
 	// map of clientID and Service running
-	clientServices map[string]*service
+	clients map[string]*service
 }
 
-func NewServer(config *ServerConfig) *Server {
-	return &Server{
-		Config:         config,
-		Auth:           new(mockAuth),
-		stop:           make(chan struct{}, 1),
-		clientServices: make(map[string]*service),
+func NewServer(config *CometConfig) *CometServer {
+	return &CometServer{
+		Config:  config,
+		Auth:    new(mockAuth),
+		stop:    make(chan struct{}, 1),
+		clients: make(map[string]*service),
 	}
 }
 
-func (server *Server) ListenAndServe(addr string) (err error) {
+func (server *CometServer) ListenAndServe(addr string) (err error) {
 	l, err := net.Listen("tcp", addr)
 	if err != nil {
 		return err
@@ -54,7 +64,7 @@ func (server *Server) ListenAndServe(addr string) (err error) {
 	return l.Close()
 }
 
-func (server *Server) Serve(l net.Listener) error {
+func (server *CometServer) Serve(l net.Listener) error {
 	var tempDelay time.Duration
 
 	for {
@@ -86,13 +96,13 @@ func (server *Server) Serve(l net.Listener) error {
 			break
 		}
 
-		go server.handleConnection(conn)
+		go server.HandleConnection(conn)
 	}
 
 	return errAccept
 }
 
-func (server *Server) handleConnection(conn net.Conn) {
+func (server *CometServer) HandleConnection(conn net.Conn) {
 	defer conn.Close()
 
 	conn.SetReadDeadline(time.Now().Add(time.Second * 3))
@@ -134,7 +144,7 @@ func (server *Server) handleConnection(conn net.Conn) {
 	// start service
 	srv := newService(conn, DefaultKeepAlive, connMsg, server)
 	// save to map
-	server.clientServices[string(connMsg.Username())] = srv
+	server.clients[string(connMsg.Username())] = srv
 	// for loop service
 	srv.start()
 }

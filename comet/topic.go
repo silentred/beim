@@ -1,240 +1,42 @@
 package comet
 
 import (
-	"beim/lib"
-	"errors"
+	"strings"
+
+	"github.com/golang/glog"
+	redis "gopkg.in/redis.v5"
 )
 
-const (
-	actAdd byte = iota
-	actDel
-)
-
-var (
-	ErrWildCard      = errors.New("Wildcard character '#', '+' must occupy entire topic level")
-	ErrWildCardAtEnd = errors.New("Wildcard character '#', '+' must be at the end")
-)
-
-var (
-	memTopicTree = &TopicTree{root: newNode("")}
-)
-
-type TopicProvider interface {
-	Subscribe(topic string, info *SubInfo)
-	Unsubscribe(topic, clientID string)
+type TopicProvidor interface {
+	Subscribe(clientID, topic string) error
+	Unsubscribe(clientID, topic string) error
 }
 
-// Topic saved in Session
-type Topic struct {
-	name string
-	qos  byte
+// RedisProvidor
+// group_topic_name: [1001, 1002] set for group
+// uid_topic_name: No need for individual person, comet knows what topics to send.
+type RedisProvidor struct {
+	Cli *redis.Client
 }
 
-// SubInfo saved in TopicTree
-// router 找到所有订阅者后，直接发送到 queue, comet 订阅 clientID topic, 就能接收到msg;
-// 目前看来，router 不需要 qos 信息
-type SubInfo struct {
-	ClientID string
-	QoS      byte
-}
-
-// TopicTree holds all subscription info
-type TopicTree struct {
-	root *topicNode
-}
-
-func (tt *TopicTree) Subscribe(topic string, info *SubInfo) {
-	res, err := parseTopic(topic)
-	if err != nil {
-		panic(err)
-	}
-
-	tt.root.subscribe(res, info, actAdd)
-}
-
-func (tt *TopicTree) Unsubscribe(topic, clientID string) {
-	res, err := parseTopic(topic)
-	if err != nil {
-		panic(err)
-	}
-	info := &SubInfo{clientID, 0}
-
-	tt.root.subscribe(res, info, actDel)
-}
-
-func (tt *TopicTree) GetSubscribers(topic string) []*SubInfo {
-	res, err := parseTopic(topic)
-	if err != nil {
-		panic(err)
-	}
-
-	var ret []*SubInfo
-	tt.root.getInfos(res, &ret)
-
-	return ret
-}
-
-type topicNode struct {
-	Name     string
-	Infos    []*SubInfo
-	children []*topicNode
-}
-
-func newNode(name string) *topicNode {
-	return &topicNode{
-		Name:     name,
-		Infos:    make([]*SubInfo, 0),
-		children: make([]*topicNode, 0),
-	}
-}
-
-func (tn *topicNode) findOrAppendNode(node *topicNode) {
-	// need mutex ??
-	child := tn.findChildByName(node.Name)
-
-	if child == nil {
-		tn.children = append(tn.children, node)
-	}
-}
-
-func (tn *topicNode) findChildByName(name string) *topicNode {
-	n := len(tn.children)
-	for i := 0; i < n; i++ {
-		if tn.children[i].Name == name {
-			return tn.children[i]
-		}
-	}
-
-	return nil
-}
-
-func (tn *topicNode) findOrCreateChildByName(name string) *topicNode {
-	node := tn.findChildByName(name)
-	if node == nil {
-		node = newNode(name)
-		tn.children = append(tn.children, node)
-	}
-
-	return node
-}
-
-func (tn *topicNode) appendSubInfo(info *SubInfo) {
-	// TODO: need mutex
-	var found bool
-	n := len(tn.Infos)
-	for i := 0; i < n; i++ {
-		if tn.Infos[i].ClientID == info.ClientID {
-			found = true
-			break
-		}
-	}
-
-	if !found {
-		tn.Infos = append(tn.Infos, info)
-	}
-}
-
-func (tn *topicNode) deleteSubInfo(info *SubInfo) {
-	var found bool
-	var index int
-	n := len(tn.Infos)
-	for i := 0; i < n; i++ {
-		if tn.Infos[i].ClientID == info.ClientID {
-			found = true
-			index = i
-			break
-		}
-	}
-
-	if found {
-		tn.Infos = tn.Infos[:index+copy(tn.Infos[index:], tn.Infos[index+1:])]
-	}
-}
-
-func (tn *topicNode) getInfos(names []string, infos *[]*SubInfo) {
-	if len(names) == 0 {
-		*infos = append(*infos, tn.Infos...)
-		return
-	}
-
-	currName := names[0]
-	if currName == "+" || currName == "#" {
-		for _, node := range tn.children {
-			node.getInfos(names[1:], infos)
-		}
-	} else {
-		node := tn.findChildByName(currName)
-		if node != nil {
-			node.getInfos(names[1:], infos)
+func (r *RedisProvidor) Subscribe(clientID, topic string) {
+	if isGroupTopic(topic) {
+		err := r.Cli.SAdd(topic, clientID).Err()
+		if err != nil {
+			glog.Error(err)
 		}
 	}
 }
 
-// sub or unsub
-func (tn *topicNode) subscribe(names []string, info *SubInfo, act byte) {
-	if len(names) == 0 {
-		switch act {
-		case actAdd:
-			tn.appendSubInfo(info)
-		case actDel:
-			tn.deleteSubInfo(info)
+func (r *RedisProvidor) Unsubscribe(clientID, topic string) {
+	if isGroupTopic(topic) {
+		err := r.Cli.SRem(topic, clientID).Err()
+		if err != nil {
+			glog.Error(err)
 		}
-		return
-	}
-
-	currName := names[0]
-	if currName == "+" || currName == "#" {
-		for _, node := range tn.children {
-			node.subscribe(names[1:], info, act)
-		}
-	} else {
-		node := tn.findOrCreateChildByName(currName)
-		node.subscribe(names[1:], info, act)
 	}
 }
 
-func parseTopic(topic string) (res []string, err error) {
-	var resBytes [][]byte
-	n := len(topic)
-	topicBytes := []byte(topic)
-	var lastSepIndex int
-
-	for i, c := range topicBytes {
-		if c == '/' {
-			resBytes = append(resBytes, topicBytes[lastSepIndex:i])
-			lastSepIndex = i + 1
-		}
-		if i == n-1 {
-			resBytes = append(resBytes, topicBytes[lastSepIndex:])
-		}
-	}
-
-	n = len(resBytes)
-	for i, nodeName := range resBytes {
-		// validate nodeName
-		if len(nodeName) > 1 && bytesContains(nodeName, []byte{'+', '#'}) {
-			err = ErrWildCard
-			return
-		}
-
-		if i < n-1 && bytesContains(nodeName, []byte{'#'}) {
-			err = ErrWildCardAtEnd
-			return
-		}
-
-		res = append(res, lib.ByteString(nodeName))
-	}
-
-	return
-}
-
-func bytesContains(stack []byte, needle []byte) bool {
-	for _, s := range stack {
-		for _, n := range needle {
-			if s == n {
-				return true
-			}
-		}
-	}
-	return false
+func isGroupTopic(topic string) bool {
+	return strings.HasPrefix(topic, "group")
 }

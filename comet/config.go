@@ -1,5 +1,4 @@
 package comet
 
-type ServerConfig struct {
-    
+type CometConfig struct {
 }
