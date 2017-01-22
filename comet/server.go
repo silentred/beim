@@ -28,13 +28,18 @@ type Comet interface {
 
 // CometServer of IM
 type CometServer struct {
+	ID     string
 	Config *CometConfig
 	// connection count
 	ConnCount uint64
 	// to validate username/password
 	Auth Authenticator
 	// send msg to router; receive from
-	messager Messager
+	Msger Messager
+	// manage session
+	SessManager SessionProvidor
+	//
+
 	// stop signal chan
 	stop chan struct{}
 	// map of clientID and Service running
@@ -120,12 +125,12 @@ func (server *CometServer) HandleConnection(conn net.Conn) {
 	conn.SetReadDeadline(time.Time{})
 
 	// do auth
-	if !server.Auth.Authenticate(string(connMsg.Username()), string(connMsg.Password())) {
+	username := string(connMsg.Username())
+	password := string(connMsg.Password())
+	if !server.Auth.Authenticate(username, password) {
 		glog.Error(errNoAuth)
 		return
 	}
-
-	// find session
 
 	// return connack msg
 	connAck := message.NewConnackMessage()
@@ -138,13 +143,21 @@ func (server *CometServer) HandleConnection(conn net.Conn) {
 		return
 	}
 
-	// subscribe topics for client
-	// send offline
+	// find session
+
+	// set online
+	err = server.SessManager.SetOnline(username)
+	err = server.SessManager.SetCometID(username, server.ID)
+	if err != nil {
+		glog.Error(err)
+	}
+
+	// send offline msg
 
 	// start service
-	srv := newService(conn, DefaultKeepAlive, connMsg, server)
+	svc := newService(conn, DefaultKeepAlive, connMsg, server)
 	// save to map
-	server.clients[string(connMsg.Username())] = srv
+	server.clients[username] = svc
 	// for loop service
-	srv.start()
+	svc.start()
 }

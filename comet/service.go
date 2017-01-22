@@ -10,13 +10,9 @@ import (
 	"github.com/surgemq/message"
 )
 
-var (
-	serviceID uint64
-)
-
 type service struct {
 	// use username as ID
-	ID string
+	UserName string
 	// contains username, password,
 	ConnMsg *message.ConnectMessage
 	conn    io.Closer
@@ -29,11 +25,11 @@ type service struct {
 
 func newService(conn io.Closer, keepAlive int, connMsg *message.ConnectMessage, server *CometServer) *service {
 	return &service{
-		ID:      string(connMsg.Username()),
-		ConnMsg: connMsg,
-		conn:    conn,
-		quit:    make(chan struct{}, 1),
-		server:  server,
+		UserName: string(connMsg.Username()),
+		ConnMsg:  connMsg,
+		conn:     conn,
+		quit:     make(chan struct{}, 1),
+		server:   server,
 
 		keepAlive: time.Duration(keepAlive) * time.Second,
 	}
@@ -70,16 +66,23 @@ func (service *service) start() {
 
 }
 
-func (service *service) stop() {
-	// break for loop
-	service.quit <- struct{}{}
-	atomic.AddUint64(&service.server.ConnCount, ^uint64(0))
-
-	// recycle resource
-	err := service.conn.Close()
+func (svc *service) stop() {
+	// set offline
+	err := svc.server.SessManager.SetOffline(svc.UserName)
 	if err != nil {
 		glog.Error(err)
 	}
+	// count down
+	atomic.AddUint64(&svc.server.ConnCount, ^uint64(0))
+
+	// recycle resource
+	err = svc.conn.Close()
+	if err != nil {
+		glog.Error(err)
+	}
+
+	// break for loop
+	svc.quit <- struct{}{}
 }
 
 func (service *service) getMessage() (msg message.Message, err error) {
@@ -159,11 +162,12 @@ func (service *service) handlePublishMsg(msg *message.PublishMessage) {
 
 	// for simplecity, just send to Router
 	// just send to destination for test; TODO stick with MQTT
-	infos := memTopicTree.GetSubscribers(string(msg.Topic()))
-	for _, info := range infos {
-		srv := service.server.clientServices[info.ClientID]
-		srv.writeMsg(msg)
-	}
+
+	// infos := memTopicTree.GetSubscribers(string(msg.Topic()))
+	// for _, info := range infos {
+	// 	srv := service.server.clientServices[info.ClientID]
+	// 	srv.writeMsg(msg)
+	// }
 
 }
 
@@ -177,7 +181,7 @@ func (service *service) handleSubscribeMsg(msg *message.SubscribeMessage) {
 
 	for i, val := range topics {
 		fmt.Printf("topic %s, qos %d \n", string(val), qoss[i])
-		memTopicTree.Subscribe(string(val), &SubInfo{string(service.ConnMsg.Username()), qoss[i]})
+		//memTopicTree.Subscribe(string(val), &SubInfo{string(service.ConnMsg.Username()), qoss[i]})
 	}
 
 	// if sub success
@@ -193,7 +197,7 @@ func (service *service) handleUnsubscribeMsg(msg *message.UnsubscribeMessage) {
 	topics := msg.Topics()
 	for _, val := range topics {
 		fmt.Printf("topic %s \n", string(val))
-		memTopicTree.Unsubscribe(string(val), string(service.ConnMsg.Username()))
+		//memTopicTree.Unsubscribe(string(val), string(service.ConnMsg.Username()))
 	}
 
 	service.writeMsg(resp)
