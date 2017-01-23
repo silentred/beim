@@ -6,14 +6,35 @@ import (
 	"net"
 	"time"
 
+	"flag"
+
 	"github.com/golang/glog"
+	"github.com/silentred/beim/lib"
 	"github.com/surgemq/message"
+	redis "gopkg.in/redis.v5"
 )
 
 var (
+	Injector = lib.NewInjector()
+
+	Store = &lib.Map{}
+
 	errAccept = errors.New("error when acceptting Connection")
 	errNoAuth = errors.New("no authrization")
+
+	redisHost string
+	redisDB   int
+	redisPwd  string
+
+	nsqHost string
 )
+
+func init() {
+	flag.StringVar(&redisHost, "redis-host", "127.0.0.1:2379", "default localhost:2379")
+	flag.IntVar(&redisDB, "redis-db", 1, "default 1")
+	flag.StringVar(&redisPwd, "redis-pwd", "", "default empty string")
+	flag.StringVar(&nsqHost, "nsq-host", "127.0.0.1:4150", "nsqd TCP interface")
+}
 
 const (
 	DefaultKeepAlive = 120
@@ -28,17 +49,18 @@ type Comet interface {
 
 // CometServer of IM
 type CometServer struct {
-	ID     string
-	Config *CometConfig
+	ID      string
+	AppName string
 	// connection count
 	ConnCount uint64
 	// to validate username/password
 	Auth Authenticator
-	// send msg to router; receive from
+	// send msg to router; receive from MQ
 	Msger Messager
 	// manage session
 	SessManager SessionProvidor
-	//
+	// topic
+	TopicManager TopicProvidor
 
 	// stop signal chan
 	stop chan struct{}
@@ -53,6 +75,41 @@ func NewServer(config *CometConfig) *CometServer {
 		stop:    make(chan struct{}, 1),
 		clients: make(map[string]*service),
 	}
+}
+
+func initServer() {
+	// redis client
+	redisCli := newRedisClient()
+	Store.Set("redis", redisCli)
+	Injector.Map(redisCli)
+
+	// auth
+	auth := mockAuth{}
+	Injector.Map(auth)
+	Injector.MapTo(auth, new(Authenticator))
+
+	// session manager
+	memSess := newMemSess()
+	Injector.Map(memSess)
+	Injector.MapTo(memSess, new(SessionProvidor))
+
+	// topic manager
+	memTopic := newMemTopic()
+	Injector.Map(memTopic)
+	Injector.MapTo(memTopic, new(TopicProvidor))
+
+}
+
+func newRedisClient() *redis.Client {
+	client := redis.NewClient(&redis.Options{
+		Addr:     redisHost,
+		DB:       redisDB,
+		Password: redisPwd, // no password set
+	})
+	if err := client.Ping().Err(); err != nil {
+		panic(err)
+	}
+	return client
 }
 
 func (server *CometServer) ListenAndServe(addr string) (err error) {

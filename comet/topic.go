@@ -58,3 +58,42 @@ func isGroupTopic(topic string) bool {
 type memTopic struct {
 	groupUser map[string][]string
 }
+
+func newMemTopic() *memTopic {
+	return &memTopic{
+		groupUser: new(map[string][]string]),
+	}
+}
+
+func (mt *memTopic) Subscribe(clientID, topic string) error {
+	if unames, ok := mt.groupUser[topic]; ok {
+		mt.groupUser[topic] = append(unames, clientID)
+	} else {
+		mt.groupUser[topic] = []string{clientID}
+	}
+}
+
+func (mt *memTopic) Unsubscribe(clientID, topic string) error {
+	if unames, ok := mt.groupUser[topic]; ok {
+		var delIndex int
+		for i, val := range unames {
+			if val == clientID {
+				delIndex = i
+				break
+			}
+		}
+
+		mt.groupUser[topic] = delIndexString(delIndex, mt.groupUser[topic])
+	}
+}
+
+func (mt *memTopic) GetGroupMembers(topic string) []string {
+	if unames, ok := mt.groupUser[topic]; ok {
+		return unames
+	}
+	return []string{}
+}
+
+func delIndexString(i int, s []string) []string {
+	return s[:i+copy(s[i:], s[i+1:])]
+}

@@ -40,6 +40,12 @@ type memSessions struct {
 	sessions map[string]Session
 }
 
+func newMemSess() *memSessions {
+	return &memSessions{
+		sessions: new(map[string]Session),
+	}
+}
+
 func (ms *memSessions) Create(clientID string, sess Session) error {
 	ms.sessions[clientID] = sess
 	return nil
