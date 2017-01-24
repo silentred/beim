@@ -7,6 +7,8 @@ import (
 	"github.com/nsqio/nsq/nsqd"
 	"github.com/silentred/beim/lib"
 	"github.com/silentred/beim/router"
+	"encoding/json"
+	"github.com/surgemq/message"
 )
 
 type Messager interface {
@@ -64,8 +66,22 @@ func (cm *CometMessager) Receive() {
 }
 
 func (cm *CometMessager) HandleMessage(msg *nsq.Message) error {
-	// decode msg.Body
-	// dispatch msg to each user's connection
+	var m Message
+	err := json.Unmarshal(msg.Body, &m)
+	if err != nil {
+		return err
+	}
 
+	for _, username := range m.UserNames {
+		if svc, ok := cm.server.clients[username]; ok {
+			pubMsg := message.NewPublishMessage()
+			_, err := pubMsg.Decode(m.Message)
+			if err != nil {
+				return err
+			}
+			svc.writeMsg(pubMsg)
+		}
+	}
+	
 	return nil
 }

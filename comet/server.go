@@ -77,7 +77,7 @@ func NewServer(config *CometConfig) *CometServer {
 	}
 }
 
-func initServer() {
+func InitServer() {
 	// redis client
 	redisCli := newRedisClient()
 	Store.Set("redis", redisCli)
